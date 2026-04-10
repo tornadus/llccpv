@@ -26,12 +26,6 @@ install_data(
   install_dir : get_option('datadir') / 'llccpv' / 'shaders' / 'ffx',
 )
 
-install_data(
-  'shaders/nis/NIS_Config.h',
-  'shaders/nis/NIS_Scaler.h',
-  install_dir : get_option('datadir') / 'llccpv' / 'shaders' / 'nis',
-)
-
 src = files(
   'src/main.c',
   'src/capture.c',
