@@ -15,7 +15,21 @@ install_data(
   'shaders/nv12.frag',
   'shaders/passthrough.frag',
   'shaders/sharp_bilinear.frag',
+  'shaders/fsr_easu.frag',
+  'shaders/fsr_rcas.frag',
   install_dir : get_option('datadir') / 'llccpv' / 'shaders',
+)
+
+install_data(
+  'shaders/ffx/ffx_a.h',
+  'shaders/ffx/ffx_fsr1.h',
+  install_dir : get_option('datadir') / 'llccpv' / 'shaders' / 'ffx',
+)
+
+install_data(
+  'shaders/nis/NIS_Config.h',
+  'shaders/nis/NIS_Scaler.h',
+  install_dir : get_option('datadir') / 'llccpv' / 'shaders' / 'nis',
 )
 
 src = files(

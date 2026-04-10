@@ -157,6 +157,7 @@ extern "C" int picker_show(struct picker_result *result, bool auto_select)
         result->height = 0;
         result->scale_mode = -1;
         result->color_range = -1;
+        result->sharpness = -1.0f;
         LOG_INFO("Auto-selected: %s (%s)", dev.name.c_str(), dev.path.c_str());
         return 0;
     }
@@ -195,8 +196,24 @@ extern "C" int picker_show(struct picker_result *result, bool auto_select)
     scaleCombo->addItem("Nearest Neighbor", QVariant(0));
     scaleCombo->addItem("Bilinear", QVariant(1));
     scaleCombo->addItem("Sharp Bilinear", QVariant(2));
+    scaleCombo->addItem("FSR 1 (AMD FidelityFX)", QVariant(3));
     scaleCombo->setCurrentIndex(1);
     form->addRow("Scaling:", scaleCombo);
+
+    /* FSR sharpness selector (only meaningful with FSR) */
+    auto *sharpCombo = new QComboBox;
+    sharpCombo->addItem("Maximum (0.0)", QVariant(0.0));
+    sharpCombo->addItem("Default (0.2)", QVariant(0.2));
+    sharpCombo->addItem("Medium (0.5)", QVariant(0.5));
+    sharpCombo->addItem("Soft (1.0)", QVariant(1.0));
+    sharpCombo->addItem("Very Soft (2.0)", QVariant(2.0));
+    sharpCombo->setCurrentIndex(1);
+    sharpCombo->setEnabled(false);
+    form->addRow("FSR Sharpness:", sharpCombo);
+
+    QObject::connect(scaleCombo, &QComboBox::currentIndexChanged, [&](int) {
+        sharpCombo->setEnabled(scaleCombo->currentData().toInt() == 3);
+    });
 
     /* Color range selector */
     auto *rangeCombo = new QComboBox;
@@ -306,6 +323,14 @@ extern "C" int picker_show(struct picker_result *result, bool auto_select)
     /* Color range */
     QVariant rangeVar = rangeCombo->currentData();
     result->color_range = rangeVar.isValid() ? rangeVar.toInt() : -1;
+
+    /* FSR sharpness */
+    if (result->scale_mode == 3 && sharpCombo->isEnabled()) {
+        QVariant sharpVar = sharpCombo->currentData();
+        result->sharpness = sharpVar.isValid() ? sharpVar.toFloat() : -1.0f;
+    } else {
+        result->sharpness = -1.0f;
+    }
 
     LOG_INFO("Selected: %s, fmt=0x%08x, res=%dx%d, scale=%d",
              result->device_path, result->pixfmt,

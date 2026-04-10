@@ -48,6 +48,7 @@ int main(int argc, char *argv[])
     int vsync_mode = -1;
     enum scale_mode scale = SCALE_BILINEAR;
     enum color_range range = RANGE_LIMITED;
+    float sharpness = -1.0f;
 
     static struct option long_opts[] = {
         {"device",       required_argument, NULL, 'd'},
@@ -57,13 +58,14 @@ int main(int argc, char *argv[])
         {"stretch",      no_argument,       NULL, 's'},
         {"scale",        required_argument, NULL, 'S'},
         {"range",        required_argument, NULL, 'r'},
+        {"sharpness",    required_argument, NULL, 'P'},
         {"vsync",        required_argument, NULL, 'v'},
         {"help",         no_argument,       NULL, 'h'},
         {NULL, 0, NULL, 0},
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "d:a:nfS:r:sv:h", long_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "d:a:nfS:r:P:sv:h", long_opts, NULL)) != -1) {
         switch (opt) {
         case 'd': device = optarg; break;
         case 'a': audio_source = optarg; break;
@@ -74,8 +76,9 @@ int main(int argc, char *argv[])
             if (strcmp(optarg, "nearest") == 0)       scale = SCALE_NEAREST;
             else if (strcmp(optarg, "bilinear") == 0)  scale = SCALE_BILINEAR;
             else if (strcmp(optarg, "sharp") == 0)     scale = SCALE_SHARP_BILINEAR;
+            else if (strcmp(optarg, "fsr") == 0)       scale = SCALE_FSR;
             else {
-                LOG_ERROR("Unknown scale mode: %s (use nearest, bilinear, sharp)", optarg);
+                LOG_ERROR("Unknown scale mode: %s (use nearest, bilinear, sharp, fsr)", optarg);
                 return 1;
             }
             break;
@@ -87,6 +90,7 @@ int main(int argc, char *argv[])
                 return 1;
             }
             break;
+        case 'P': sharpness = strtof(optarg, NULL); break;
         case 'v': vsync_mode = atoi(optarg); break;
         case 'h':
             fprintf(stderr,
@@ -96,7 +100,8 @@ int main(int argc, char *argv[])
                 "  -n, --no-audio           Disable audio passthrough\n"
                 "  -f, --fullscreen         Start in fullscreen\n"
                 "  -s, --stretch            Stretch to fill window (ignore aspect ratio)\n"
-                "  -S, --scale MODE         nearest, bilinear (default), sharp\n"
+                "  -S, --scale MODE         nearest, bilinear (default), sharp, fsr\n"
+                "  -P, --sharpness VALUE    FSR sharpness: 0.0 (max) to 2.0 (soft), default 0.2\n"
                 "  -r, --range MODE         limited (default, TV), full (PC)\n"
                 "  -v, --vsync MODE         0=off, 1=on, -1=adaptive (default)\n"
                 "  -h, --help               Show this help\n",
@@ -108,7 +113,7 @@ int main(int argc, char *argv[])
     }
 
     /* Device picker: show Qt dialog if no device specified on CLI */
-    struct picker_result pick = { .scale_mode = -1, .color_range = -1 };
+    struct picker_result pick = { .scale_mode = -1, .color_range = -1, .sharpness = -1.0f };
     if (!device) {
         if (picker_show(&pick, false) < 0) {
             LOG_INFO("No device selected, exiting");
@@ -138,7 +143,7 @@ int main(int argc, char *argv[])
     }
 
     /* Request OpenGL 3.3 Core */
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
@@ -181,6 +186,8 @@ int main(int argc, char *argv[])
         scale = pick.scale_mode;
     if (pick.color_range >= 0)
         range = pick.color_range;
+    if (pick.sharpness >= 0.0f)
+        sharpness = pick.sharpness;
 
     if (render_init(&rctx, cap.width, cap.height, cap.pixfmt, scale, range, shader_dir) < 0) {
         SDL_GL_DestroyContext(gl_ctx);
@@ -189,6 +196,8 @@ int main(int argc, char *argv[])
         SDL_Quit();
         return 1;
     }
+    if (sharpness >= 0.0f)
+        render_set_sharpness(&rctx, sharpness);
 
     /* Start capture (launches capture thread) */
     if (capture_start(&cap, frame_event_type) < 0) {

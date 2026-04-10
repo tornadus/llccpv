@@ -1,8 +1,45 @@
 #include "render.h"
 #include "shader.h"
 
+#include <math.h>
 #include <time.h>
 #include <linux/videodev2.h>
+
+/* --- FSR constant computation (ported from ffx_fsr1.h FsrEasuCon/FsrRcasCon) --- */
+
+static inline uint32_t f2bits(float f)
+{
+    uint32_t u;
+    memcpy(&u, &f, sizeof(u));
+    return u;
+}
+
+static void fsr_easu_con(uint32_t con0[4], uint32_t con1[4],
+                          uint32_t con2[4], uint32_t con3[4],
+                          float iw, float ih, float ow, float oh)
+{
+    con0[0] = f2bits(iw / ow);
+    con0[1] = f2bits(ih / oh);
+    con0[2] = f2bits(0.5f * iw / ow - 0.5f);
+    con0[3] = f2bits(0.5f * ih / oh - 0.5f);
+    con1[0] = f2bits(1.0f / iw);
+    con1[1] = f2bits(1.0f / ih);
+    con1[2] = f2bits( 1.0f / iw);
+    con1[3] = f2bits(-1.0f / ih);
+    con2[0] = f2bits(-1.0f / iw);
+    con2[1] = f2bits( 2.0f / ih);
+    con2[2] = f2bits( 1.0f / iw);
+    con2[3] = f2bits( 2.0f / ih);
+    con3[0] = f2bits( 0.0f);
+    con3[1] = f2bits( 4.0f / ih);
+    con3[2] = con3[3] = 0;
+}
+
+static void fsr_rcas_con(uint32_t con[4], float sharpness)
+{
+    con[0] = f2bits(exp2f(-sharpness));
+    con[1] = con[2] = con[3] = 0;
+}
 
 static const char *frag_shader_for_pixfmt(uint32_t pixfmt)
 {
@@ -138,6 +175,38 @@ static int setup_fbo(struct render_ctx *ctx, int width, int height)
     return 0;
 }
 
+/* --- FSR FBO setup (output resolution, for EASU → RCAS intermediate) --- */
+
+static int setup_fsr_fbo(struct render_ctx *ctx, int width, int height)
+{
+    if (ctx->fsr_fbo) {
+        glDeleteFramebuffers(1, &ctx->fsr_fbo);
+        glDeleteTextures(1, &ctx->fsr_fbo_texture);
+    }
+
+    ctx->fsr_fbo_texture = create_texture(GL_NEAREST, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, width, height, 0,
+                 GL_RGB, GL_UNSIGNED_BYTE, NULL);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    glGenFramebuffers(1, &ctx->fsr_fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, ctx->fsr_fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, ctx->fsr_fbo_texture, 0);
+
+    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    if (status != GL_FRAMEBUFFER_COMPLETE) {
+        LOG_ERROR("FSR FBO incomplete: 0x%x", status);
+        return -1;
+    }
+
+    ctx->fsr_out_w = width;
+    ctx->fsr_out_h = height;
+    return 0;
+}
+
 /* --- Shader setup --- */
 
 static void setup_conv_uniforms(struct render_ctx *ctx, uint32_t pixfmt)
@@ -207,6 +276,37 @@ static int load_scale_shader(struct render_ctx *ctx, enum scale_mode mode, const
     return 0;
 }
 
+static int load_fsr_shaders(struct render_ctx *ctx, const char *shader_dir)
+{
+    char vert_path[512], frag_path[512];
+    snprintf(vert_path, sizeof(vert_path), "%s/quad.vert", shader_dir);
+
+    /* EASU */
+    snprintf(frag_path, sizeof(frag_path), "%s/fsr_easu.frag", shader_dir);
+    ctx->easu_program = shader_load_program_with_includes(vert_path, frag_path, shader_dir);
+    if (!ctx->easu_program)
+        return -1;
+
+    ctx->easu_loc_tex  = glGetUniformLocation(ctx->easu_program, "tex_rgb");
+    ctx->easu_loc_con0 = glGetUniformLocation(ctx->easu_program, "easu_con0");
+    ctx->easu_loc_con1 = glGetUniformLocation(ctx->easu_program, "easu_con1");
+    ctx->easu_loc_con2 = glGetUniformLocation(ctx->easu_program, "easu_con2");
+    ctx->easu_loc_con3 = glGetUniformLocation(ctx->easu_program, "easu_con3");
+    ctx->easu_loc_y_flip = glGetUniformLocation(ctx->easu_program, "y_flip");
+
+    /* RCAS */
+    snprintf(frag_path, sizeof(frag_path), "%s/fsr_rcas.frag", shader_dir);
+    ctx->rcas_program = shader_load_program_with_includes(vert_path, frag_path, shader_dir);
+    if (!ctx->rcas_program)
+        return -1;
+
+    ctx->rcas_loc_tex    = glGetUniformLocation(ctx->rcas_program, "tex_rgb");
+    ctx->rcas_loc_con    = glGetUniformLocation(ctx->rcas_program, "rcas_con");
+    ctx->rcas_loc_y_flip = glGetUniformLocation(ctx->rcas_program, "y_flip");
+
+    return 0;
+}
+
 /* --- Public API --- */
 
 int render_init(struct render_ctx *ctx, int width, int height,
@@ -222,8 +322,15 @@ int render_init(struct render_ctx *ctx, int width, int height,
     if (load_conv_shader(ctx, pixfmt, shader_dir) < 0)
         return -1;
 
-    if (load_scale_shader(ctx, mode, shader_dir) < 0)
-        return -1;
+    if (mode == SCALE_FSR) {
+        if (load_fsr_shaders(ctx, shader_dir) < 0)
+            return -1;
+        ctx->rcas_sharpness = 0.2f;
+        fsr_rcas_con(ctx->rcas_con, ctx->rcas_sharpness);
+    } else {
+        if (load_scale_shader(ctx, mode, shader_dir) < 0)
+            return -1;
+    }
 
     glGenVertexArrays(1, &ctx->vao);
 
@@ -302,28 +409,69 @@ void render_draw(struct render_ctx *ctx, int out_w, int out_h)
     glBindVertexArray(ctx->vao);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
-    /* --- Pass 2: Scaling → screen at output resolution --- */
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(saved_viewport[0], saved_viewport[1],
-               saved_viewport[2], saved_viewport[3]);
+    if (ctx->scale_mode == SCALE_FSR) {
+        {
+            /* Lazy-allocate or resize FSR FBO when output dimensions change */
+            if (out_w != ctx->fsr_out_w || out_h != ctx->fsr_out_h) {
+                setup_fsr_fbo(ctx, out_w, out_h);
+                fsr_easu_con(ctx->easu_con0, ctx->easu_con1,
+                             ctx->easu_con2, ctx->easu_con3,
+                             (float)ctx->src_width, (float)ctx->src_height,
+                             (float)out_w, (float)out_h);
+            }
 
-    glUseProgram(ctx->scale_program);
-    glUniform1f(ctx->scale_loc_y_flip, 0.0f); /* no flip: FBO is in GL orientation */
+            /* --- Pass 2: EASU — source FBO → FSR FBO at output resolution --- */
+            glBindFramebuffer(GL_FRAMEBUFFER, ctx->fsr_fbo);
+            glViewport(0, 0, out_w, out_h);
 
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, ctx->fbo_texture);
-    glUniform1i(ctx->scale_loc_tex, 0);
+            glUseProgram(ctx->easu_program);
+            glUniform1f(ctx->easu_loc_y_flip, 0.0f);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, ctx->fbo_texture);
+            glUniform1i(ctx->easu_loc_tex, 0);
+            glUniform4uiv(ctx->easu_loc_con0, 1, ctx->easu_con0);
+            glUniform4uiv(ctx->easu_loc_con1, 1, ctx->easu_con1);
+            glUniform4uiv(ctx->easu_loc_con2, 1, ctx->easu_con2);
+            glUniform4uiv(ctx->easu_loc_con3, 1, ctx->easu_con3);
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
-    if (ctx->scale_loc_src_size >= 0)
-        glUniform2f(ctx->scale_loc_src_size,
-                    (float)ctx->src_width, (float)ctx->src_height);
-    if (ctx->scale_loc_output_size >= 0)
-        glUniform2f(ctx->scale_loc_output_size,
-                    (float)out_w, (float)out_h);
+            /* --- Pass 3: RCAS — FSR FBO → screen --- */
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glViewport(saved_viewport[0], saved_viewport[1],
+                       saved_viewport[2], saved_viewport[3]);
 
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            glUseProgram(ctx->rcas_program);
+            glUniform1f(ctx->rcas_loc_y_flip, 0.0f);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, ctx->fsr_fbo_texture);
+            glUniform1i(ctx->rcas_loc_tex, 0);
+            if (ctx->rcas_loc_con >= 0)
+                glUniform4uiv(ctx->rcas_loc_con, 1, ctx->rcas_con);
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        }
+    } else {
+        /* --- Pass 2: Scaling → screen at output resolution --- */
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(saved_viewport[0], saved_viewport[1],
+                   saved_viewport[2], saved_viewport[3]);
+
+        glUseProgram(ctx->scale_program);
+        glUniform1f(ctx->scale_loc_y_flip, 0.0f);
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, ctx->fbo_texture);
+        glUniform1i(ctx->scale_loc_tex, 0);
+
+        if (ctx->scale_loc_src_size >= 0)
+            glUniform2f(ctx->scale_loc_src_size,
+                        (float)ctx->src_width, (float)ctx->src_height);
+        if (ctx->scale_loc_output_size >= 0)
+            glUniform2f(ctx->scale_loc_output_size,
+                        (float)out_w, (float)out_h);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    }
+
     glBindVertexArray(0);
-
     glUseProgram(0);
 }
 
@@ -337,8 +485,16 @@ int render_resize(struct render_ctx *ctx, int width, int height,
 
     setup_source_textures(ctx, width, height, pixfmt);
     setup_fbo(ctx, width, height);
+    ctx->fsr_out_w = 0;
+    ctx->fsr_out_h = 0;
     LOG_INFO("Renderer resized: %dx%d, pixfmt=0x%08x", width, height, pixfmt);
     return 0;
+}
+
+void render_set_sharpness(struct render_ctx *ctx, float sharpness)
+{
+    ctx->rcas_sharpness = sharpness;
+    fsr_rcas_con(ctx->rcas_con, sharpness);
 }
 
 void render_cleanup(struct render_ctx *ctx)
@@ -351,7 +507,21 @@ void render_cleanup(struct render_ctx *ctx)
         glDeleteProgram(ctx->scale_program);
         ctx->scale_program = 0;
     }
+    if (ctx->easu_program) {
+        glDeleteProgram(ctx->easu_program);
+        ctx->easu_program = 0;
+    }
+    if (ctx->rcas_program) {
+        glDeleteProgram(ctx->rcas_program);
+        ctx->rcas_program = 0;
+    }
     delete_textures(ctx);
+    if (ctx->fsr_fbo) {
+        glDeleteFramebuffers(1, &ctx->fsr_fbo);
+        glDeleteTextures(1, &ctx->fsr_fbo_texture);
+        ctx->fsr_fbo = 0;
+        ctx->fsr_fbo_texture = 0;
+    }
     if (ctx->fbo) {
         glDeleteFramebuffers(1, &ctx->fbo);
         glDeleteTextures(1, &ctx->fbo_texture);

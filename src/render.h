@@ -13,6 +13,7 @@ enum scale_mode {
     SCALE_NEAREST = 0,
     SCALE_BILINEAR,
     SCALE_SHARP_BILINEAR,
+    SCALE_FSR,
 };
 
 enum color_range {
@@ -46,6 +47,29 @@ struct render_ctx {
     GLint scale_loc_y_flip;
     enum scale_mode scale_mode;
 
+    /* FSR pass (only used when scale_mode == SCALE_FSR) */
+    GLuint easu_program;
+    GLuint rcas_program;
+    GLuint fsr_fbo;
+    GLuint fsr_fbo_texture;
+    int fsr_out_w;
+    int fsr_out_h;
+    GLint easu_loc_tex;
+    GLint easu_loc_con0;
+    GLint easu_loc_con1;
+    GLint easu_loc_con2;
+    GLint easu_loc_con3;
+    GLint easu_loc_y_flip;
+    uint32_t easu_con0[4];
+    uint32_t easu_con1[4];
+    uint32_t easu_con2[4];
+    uint32_t easu_con3[4];
+    GLint rcas_loc_tex;
+    GLint rcas_loc_con;
+    GLint rcas_loc_y_flip;
+    uint32_t rcas_con[4];
+    float rcas_sharpness;
+
     /* Shared */
     GLuint vao;
     int src_width;
@@ -70,6 +94,9 @@ void render_draw(struct render_ctx *ctx, int out_w, int out_h);
 /* Handle source resolution or format change. */
 int render_resize(struct render_ctx *ctx, int width, int height,
                   uint32_t pixfmt, const char *shader_dir);
+
+/* Set FSR RCAS sharpness (0.0 = maximum, 2.0 = soft). Only effective in FSR mode. */
+void render_set_sharpness(struct render_ctx *ctx, float sharpness);
 
 /* Clean up GL resources. */
 void render_cleanup(struct render_ctx *ctx);

@@ -8,8 +8,9 @@ struct picker_result {
     uint32_t pixfmt;   /* selected pixel format, 0 = auto */
     int width;         /* selected resolution, 0 = auto-detect from source */
     int height;
-    int scale_mode;    /* -1 = not set (use CLI default), 0/1/2 = enum scale_mode */
+    int scale_mode;    /* -1 = not set (use CLI default), 0/1/2/3 = enum scale_mode */
     int color_range;   /* -1 = not set, 0 = limited (TV), 1 = full (PC) */
+    float sharpness;   /* FSR RCAS sharpness, <0 = not set (use default) */
 };
 
 #ifdef __cplusplus
