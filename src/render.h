@@ -87,8 +87,10 @@ int render_init(struct render_ctx *ctx, int width, int height,
 /* Upload a new frame to the GPU texture(s). */
 void render_upload_frame(struct render_ctx *ctx, const struct frame_info *frame);
 
-/* Draw: pass 1 (conversion → FBO), pass 2 (scaling → screen).
- * out_w/out_h is the viewport size for the scaling pass. */
+/* Draw: 2 or 3 passes depending on scale mode.
+ * Standard: pass 1 (conversion → FBO), pass 2 (scaling → screen).
+ * FSR:      pass 1 (conversion → FBO), pass 2 (EASU → FSR FBO), pass 3 (RCAS → screen).
+ * out_w/out_h is the viewport size for the final pass. */
 void render_draw(struct render_ctx *ctx, int out_w, int out_h);
 
 /* Handle source resolution or format change. */

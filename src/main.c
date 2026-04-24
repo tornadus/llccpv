@@ -142,7 +142,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    /* Request OpenGL 3.3 Core */
+    /* Request OpenGL 4.3 Core (required by FSR EASU's textureGather) */
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);

@@ -38,8 +38,6 @@ struct capture_ctx {
 };
 
 /* Open a V4L2 capture device and negotiate format.
- * Returns 0 on success, -1 on failure. */
-/* Open a V4L2 capture device and negotiate format.
  * req_pixfmt: requested pixel format (0 = auto-select best).
  * req_width/req_height: requested resolution (0 = auto-detect from source).
  * Returns 0 on success, -1 on failure. */
