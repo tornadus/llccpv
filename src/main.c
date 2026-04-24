@@ -38,6 +38,45 @@ static const char *find_shader_dir(const char *argv0)
     return "shaders";
 }
 
+/* Test/debug: dump backbuffer as P6 PPM, rows flipped to top-first. */
+static int dump_backbuffer_ppm(const char *path, int w, int h)
+{
+    uint8_t *buf = malloc((size_t)w * h * 3);
+    if (!buf) return -1;
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, buf);
+
+    size_t row = (size_t)w * 3;
+    uint8_t *tmp = malloc(row);
+    if (tmp) {
+        for (int y = 0; y < h / 2; y++) {
+            uint8_t *t = buf + (size_t)y * row;
+            uint8_t *b = buf + (size_t)(h - 1 - y) * row;
+            memcpy(tmp, t, row);
+            memcpy(t, b, row);
+            memcpy(b, tmp, row);
+        }
+        free(tmp);
+    }
+
+    FILE *f = fopen(path, "wb");
+    if (!f) { free(buf); LOG_ERROR("dump_frame: fopen %s: %s", path, strerror(errno)); return -1; }
+    fprintf(f, "P6\n%d %d\n255\n", w, h);
+    fwrite(buf, 1, (size_t)w * h * 3, f);
+    fclose(f);
+    free(buf);
+    return 0;
+}
+
+static Uint32 SDLCALL exit_timer_cb(void *userdata, SDL_TimerID tid, Uint32 interval)
+{
+    (void)userdata; (void)tid; (void)interval;
+    SDL_Event ev = { .type = SDL_EVENT_QUIT };
+    SDL_PushEvent(&ev);
+    return 0; /* one-shot */
+}
+
 int main(int argc, char *argv[])
 {
     const char *device = NULL;
@@ -45,10 +84,21 @@ int main(int argc, char *argv[])
     bool start_fullscreen = false;
     bool stretch = false;
     bool no_audio = false;
+    bool headless = false;
     int vsync_mode = -1;
     enum scale_mode scale = SCALE_BILINEAR;
     enum color_range range = RANGE_LIMITED;
     float sharpness = -1.0f;
+    int exit_after_ms = 0;
+    int frames_limit = 0;
+    const char *dump_frame_path = NULL;
+
+    enum {
+        OPT_EXIT_AFTER = 256,
+        OPT_FRAMES,
+        OPT_HEADLESS,
+        OPT_DUMP_FRAME,
+    };
 
     static struct option long_opts[] = {
         {"device",       required_argument, NULL, 'd'},
@@ -60,6 +110,10 @@ int main(int argc, char *argv[])
         {"range",        required_argument, NULL, 'r'},
         {"sharpness",    required_argument, NULL, 'P'},
         {"vsync",        required_argument, NULL, 'v'},
+        {"exit-after",   required_argument, NULL, OPT_EXIT_AFTER},
+        {"frames",       required_argument, NULL, OPT_FRAMES},
+        {"headless",     no_argument,       NULL, OPT_HEADLESS},
+        {"dump-frame",   required_argument, NULL, OPT_DUMP_FRAME},
         {"help",         no_argument,       NULL, 'h'},
         {NULL, 0, NULL, 0},
     };
@@ -92,6 +146,10 @@ int main(int argc, char *argv[])
             break;
         case 'P': sharpness = strtof(optarg, NULL); break;
         case 'v': vsync_mode = atoi(optarg); break;
+        case OPT_EXIT_AFTER: exit_after_ms  = atoi(optarg); break;
+        case OPT_FRAMES:     frames_limit   = atoi(optarg); break;
+        case OPT_HEADLESS:   headless       = true; break;
+        case OPT_DUMP_FRAME: dump_frame_path = optarg; break;
         case 'h':
             fprintf(stderr,
                 "Usage: %s [options]\n"
@@ -104,6 +162,10 @@ int main(int argc, char *argv[])
                 "  -P, --sharpness VALUE    FSR sharpness: 0.0 (max) to 2.0 (soft), default 0.2\n"
                 "  -r, --range MODE         limited (default, TV), full (PC)\n"
                 "  -v, --vsync MODE         0=off, 1=on, -1=adaptive (default)\n"
+                "      --exit-after MS      Auto-quit after MS milliseconds\n"
+                "      --frames N           Auto-quit after rendering N frames\n"
+                "      --headless           Create window hidden (SDL_WINDOW_HIDDEN)\n"
+                "      --dump-frame PATH    Write last rendered frame as PPM on exit\n"
                 "  -h, --help               Show this help\n",
                 argv[0]);
             return 0;
@@ -123,7 +185,7 @@ int main(int argc, char *argv[])
     }
 
     /* Initialize SDL */
-    if (!SDL_Init(SDL_INIT_VIDEO)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | (exit_after_ms > 0 ? SDL_INIT_EVENTS : 0))) {
         LOG_ERROR("SDL_Init failed: %s", SDL_GetError());
         return 1;
     }
@@ -152,6 +214,8 @@ int main(int argc, char *argv[])
     SDL_WindowFlags win_flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
     if (start_fullscreen)
         win_flags |= SDL_WINDOW_FULLSCREEN;
+    if (headless)
+        win_flags |= SDL_WINDOW_HIDDEN;
 
     SDL_Window *window = SDL_CreateWindow("llccpv", cap.width, cap.height, win_flags);
     if (!window) {
@@ -223,10 +287,15 @@ int main(int argc, char *argv[])
         /* Audio failure is non-fatal — continue without audio */
     }
 
+    /* Test-mode: schedule auto-quit */
+    if (exit_after_ms > 0)
+        SDL_AddTimer((Uint32)exit_after_ms, exit_timer_cb, NULL);
+
     /* Main loop — event-driven, renders only when a new frame arrives */
     bool running = true;
     bool have_frame = false;
     bool need_reinit = false;
+    int frames_rendered = 0;
 
     while (running) {
         SDL_Event event;
@@ -288,10 +357,13 @@ int main(int argc, char *argv[])
         }
 
         /* Pick up the latest frame from the mailbox */
+        bool rendered_new_frame = false;
         if (have_frame) {
             struct frame_info frame;
-            if (capture_get_frame(&cap, &frame) == 0)
+            if (capture_get_frame(&cap, &frame) == 0) {
                 render_upload_frame(&rctx, &frame);
+                rendered_new_frame = true;
+            }
             have_frame = false;
         }
 
@@ -330,7 +402,18 @@ int main(int argc, char *argv[])
         render_draw(&rctx, vp_w, vp_h);
         glFlush();
 
+        /* Test-mode: capture the latest *new* frame before swap. Skips
+         * iterations with no new frame so we don't dump uninit textures. */
+        if (dump_frame_path && rendered_new_frame)
+            dump_backbuffer_ppm(dump_frame_path, win_w, win_h);
+
         SDL_GL_SwapWindow(window);
+
+        if (rendered_new_frame) {
+            frames_rendered++;
+            if (frames_limit > 0 && frames_rendered >= frames_limit)
+                running = false;
+        }
     }
 
     /* Cleanup */

@@ -34,7 +34,7 @@ render_core = static_library('render_core',
   dependencies : [gl_dep, m_dep],
 )
 
-executable('llccpv',
+llccpv_exe = executable('llccpv',
   ['src/main.c', 'src/capture.c', 'src/capture_mailbox.c',
    'src/audio.c', 'src/ring.c', 'src/picker.cpp'],
   link_with : render_core,
@@ -75,3 +75,22 @@ test_capture_mailbox = executable('test_capture_mailbox',
   build_by_default : false,
 )
 test('capture_mailbox', test_capture_mailbox, timeout : 10)
+
+# --- e2e helpers ---
+feeder_exe = executable('feeder',
+  'tests/e2e/feeder/feeder.c',
+  build_by_default : false,
+)
+
+# Meson-integrated e2e runner. TAP protocol so individual test results
+# surface, and the wrapper emits a SKIP directive when the llccpv-test
+# loopback device isn't present — `meson test` always completes without
+# failing the run. Timeout covers the ~70 s quick-run suite; stress tests
+# remain opt-in via tests/e2e/run.sh --stress.
+test('e2e',
+  find_program('tests/e2e/meson_test.sh'),
+  protocol : 'tap',
+  workdir  : meson.project_source_root(),
+  timeout  : 180,
+  depends  : [llccpv_exe, feeder_exe],
+)

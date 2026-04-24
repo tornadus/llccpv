@@ -1,18 +1,27 @@
 # llccpv test suite
 
-Three independent test binaries, all run from `meson test`:
+Three unit-test binaries run under `meson test`, plus an opt-in
+end-to-end suite that drives the full pipeline via v4l2loopback:
 
-| Suite            | Covers                                   | GL required |
-|------------------|------------------------------------------|-------------|
-| `pixel`          | Render pipeline: color conversion, scaling, FSR invariants | yes         |
-| `audio`          | SPSC ring buffer (ring.c)                | no          |
-| `capture_mailbox`| Capture mailbox protocol                 | no          |
+| Suite            | Covers                                                      | GL required |
+|------------------|-------------------------------------------------------------|-------------|
+| `pixel`          | Render pipeline: color conversion, scaling, FSR invariants  | yes         |
+| `audio`          | SPSC ring buffer (ring.c)                                   | no          |
+| `capture_mailbox`| Capture mailbox protocol                                    | no          |
+| `e2e` (separate) | Full capture → render → dump via v4l2loopback; edge cases + stress | yes  |
 
 ```
 meson compile -C build
-meson test    -C build                      # all three
-meson test    -C build --verbose pixel      # single suite, show output
+meson test    -C build                      # unit + e2e (skips e2e cleanly if no loopback)
+meson test    -C build --verbose pixel      # single unit suite
+meson test    -C build --verbose e2e        # just the e2e suite, per-test output
+
+tests/e2e/run.sh --stress                   # + soak/stress (~12 min; not in meson test)
 ```
+
+See [`tests/e2e/README.md`](e2e/README.md) for e2e setup (requires
+`v4l2loopback` + one-time device creation). Stress tests are separate
+because they take ~12 min — too long to belong in default `meson test`.
 
 `test_pixel` opens a hidden SDL3 window to create a real OpenGL 4.3 Core
 context, then drives the production render code with synthetic YUV frames.
