@@ -133,14 +133,15 @@ int main(int argc, char *argv[])
     if (capture_open(&cap, device, pick.pixfmt, pick.width, pick.height) < 0)
         return 1;
 
-    /* Register a custom event type for new-frame signals from the capture thread */
-    uint32_t frame_event_type = SDL_RegisterEvents(1);
+    /* Register custom event types: new-frame and source-format-change. */
+    uint32_t frame_event_type = SDL_RegisterEvents(2);
     if (frame_event_type == 0) {
         LOG_ERROR("SDL_RegisterEvents failed");
         capture_close(&cap);
         SDL_Quit();
         return 1;
     }
+    uint32_t reinit_event_type = frame_event_type + 1;
 
     /* Request OpenGL 4.3 Core (required by FSR EASU's textureGather) */
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
@@ -200,7 +201,7 @@ int main(int argc, char *argv[])
         render_set_sharpness(&rctx, sharpness);
 
     /* Start capture (launches capture thread) */
-    if (capture_start(&cap, frame_event_type) < 0) {
+    if (capture_start(&cap, frame_event_type, reinit_event_type) < 0) {
         render_cleanup(&rctx);
         SDL_GL_DestroyContext(gl_ctx);
         SDL_DestroyWindow(window);
@@ -225,6 +226,7 @@ int main(int argc, char *argv[])
     /* Main loop — event-driven, renders only when a new frame arrives */
     bool running = true;
     bool have_frame = false;
+    bool need_reinit = false;
 
     while (running) {
         SDL_Event event;
@@ -252,12 +254,38 @@ int main(int argc, char *argv[])
             default:
                 if (event.type == frame_event_type)
                     have_frame = true;
+                else if (event.type == reinit_event_type)
+                    need_reinit = true;
                 break;
             }
         } while (SDL_PollEvent(&event));
 
         if (!running)
             break;
+
+        /* Source format changed — tear down render, reinit capture + render
+         * at the new dims. Viewport math below handles any aspect change. */
+        if (need_reinit) {
+            render_cleanup(&rctx);
+            if (capture_reinit(&cap) < 0) {
+                LOG_ERROR("capture_reinit failed; exiting");
+                running = false;
+                break;
+            }
+            if (render_init(&rctx, cap.width, cap.height, cap.pixfmt,
+                            scale, range, shader_dir) < 0) {
+                LOG_ERROR("render_init after reinit failed; exiting");
+                running = false;
+                break;
+            }
+            if (sharpness >= 0.0f)
+                render_set_sharpness(&rctx, sharpness);
+            LOG_INFO("Source format change: reinitialized %dx%d pixfmt=0x%08x",
+                     cap.width, cap.height, cap.pixfmt);
+            need_reinit = false;
+            have_frame = false; /* mailbox was drained during reinit */
+            continue; /* wait for the first frame at the new format */
+        }
 
         /* Pick up the latest frame from the mailbox */
         if (have_frame) {

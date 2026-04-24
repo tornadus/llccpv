@@ -40,12 +40,27 @@ static void *capture_thread_func(void *arg)
     struct capture_ctx *ctx = arg;
 
     while (atomic_load(&ctx->thread_running)) {
-        /* Block until a frame is ready (or timeout for clean shutdown) */
-        struct pollfd pfd = { .fd = ctx->fd, .events = POLLIN };
+        /* Watch for frames (POLLIN) and source-change events (POLLPRI). */
+        struct pollfd pfd = { .fd = ctx->fd, .events = POLLIN | POLLPRI };
         int ret = poll(&pfd, 1, 100); /* 100ms timeout for shutdown check */
 
         if (ret <= 0)
             continue;
+
+        /* Source format changed on the producer side. Signal main and exit
+         * the thread — main will call capture_reinit() which joins us. */
+        if (pfd.revents & POLLPRI) {
+            struct v4l2_event ev = {0};
+            if (xioctl(ctx->fd, VIDIOC_DQEVENT, &ev) == 0 &&
+                ev.type == V4L2_EVENT_SOURCE_CHANGE &&
+                (ev.u.src_change.changes & V4L2_EVENT_SRC_CH_RESOLUTION)) {
+                LOG_INFO("Source change event received");
+                SDL_Event sev = { .type = ctx->reinit_event_type };
+                SDL_PushEvent(&sev);
+                atomic_store(&ctx->thread_running, false);
+                return NULL;
+            }
+        }
 
         if (!(pfd.revents & POLLIN))
             continue;
@@ -76,7 +91,7 @@ static void *capture_thread_func(void *arg)
             requeue_buffer(ctx, displaced);
 
         /* Signal the main/render thread that a new frame is available */
-        SDL_Event event = { .type = ctx->sdl_event_type };
+        SDL_Event event = { .type = ctx->frame_event_type };
         SDL_PushEvent(&event);
     }
 
@@ -187,10 +202,12 @@ int capture_open(struct capture_ctx *ctx, const char *device,
     return 0;
 }
 
-int capture_start(struct capture_ctx *ctx, uint32_t sdl_event_type)
+/* Allocate + mmap + QBUF all capture buffers, STREAMON, subscribe to
+ * source-change events, launch the capture thread. Requires ctx->fd open
+ * and ctx->width/height/pixfmt already set. Shared by capture_start and
+ * capture_reinit. */
+static int capture_bring_up_streaming(struct capture_ctx *ctx)
 {
-    ctx->sdl_event_type = sdl_event_type;
-
     struct v4l2_requestbuffers req = {
         .count = CAPTURE_NUM_BUFFERS,
         .type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
@@ -233,7 +250,6 @@ int capture_start(struct capture_ctx *ctx, uint32_t sdl_event_type)
         }
     }
 
-    /* Queue all buffers */
     for (int i = 0; i < ctx->num_buffers; i++) {
         struct v4l2_buffer buf = {
             .type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
@@ -246,24 +262,63 @@ int capture_start(struct capture_ctx *ctx, uint32_t sdl_event_type)
         }
     }
 
-    /* Start streaming */
     enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (xioctl(ctx->fd, VIDIOC_STREAMON, &type) < 0) {
         LOG_ERROR("VIDIOC_STREAMON failed: %s", strerror(errno));
         return -1;
     }
-
     ctx->streaming = true;
 
-    /* Launch capture thread */
+    /* Subscribe to source-change events so we can handle mid-stream
+     * resolution / format changes. Drivers that don't support events
+     * return ENOTTY — continue without live reconfig support. */
+    struct v4l2_event_subscription sub = { .type = V4L2_EVENT_SOURCE_CHANGE };
+    if (xioctl(ctx->fd, VIDIOC_SUBSCRIBE_EVENT, &sub) < 0 && errno != ENOTTY) {
+        LOG_WARN("VIDIOC_SUBSCRIBE_EVENT failed: %s (reinit on source change disabled)",
+                 strerror(errno));
+    }
+
     atomic_store(&ctx->thread_running, true);
     if (pthread_create(&ctx->thread, NULL, capture_thread_func, ctx) != 0) {
         LOG_ERROR("Failed to create capture thread: %s", strerror(errno));
         return -1;
     }
+    ctx->thread_created = true;
 
     LOG_INFO("Capture streaming started (threaded)");
     return 0;
+}
+
+/* Stop thread, STREAMOFF, release buffers. Used by capture_stop (on close)
+ * and capture_reinit (to rebuild at a new format). Leaves ctx->fd open. */
+static void capture_tear_down_streaming(struct capture_ctx *ctx);
+
+int capture_start(struct capture_ctx *ctx,
+                  uint32_t frame_event_type,
+                  uint32_t reinit_event_type)
+{
+    ctx->frame_event_type = frame_event_type;
+    ctx->reinit_event_type = reinit_event_type;
+    return capture_bring_up_streaming(ctx);
+}
+
+int capture_reinit(struct capture_ctx *ctx)
+{
+    capture_tear_down_streaming(ctx);
+
+    struct v4l2_format fmt = { .type = V4L2_BUF_TYPE_VIDEO_CAPTURE };
+    if (xioctl(ctx->fd, VIDIOC_G_FMT, &fmt) < 0) {
+        LOG_ERROR("VIDIOC_G_FMT during reinit failed: %s", strerror(errno));
+        return -1;
+    }
+    ctx->width  = fmt.fmt.pix.width;
+    ctx->height = fmt.fmt.pix.height;
+    ctx->pixfmt = fmt.fmt.pix.pixelformat;
+
+    LOG_INFO("Capture reinit: %dx%d pixfmt=0x%08x",
+             ctx->width, ctx->height, ctx->pixfmt);
+
+    return capture_bring_up_streaming(ctx);
 }
 
 int capture_get_frame(struct capture_ctx *ctx, struct frame_info *frame)
@@ -286,18 +341,19 @@ static void capture_release_frame(struct capture_ctx *ctx)
     }
 }
 
-static void capture_stop(struct capture_ctx *ctx)
+static void capture_tear_down_streaming(struct capture_ctx *ctx)
 {
-    /* Stop the capture thread */
-    if (atomic_load(&ctx->thread_running)) {
+    /* Stop the capture thread (it may have already set thread_running=false
+     * itself on a source-change event). Always join to reap. */
+    if (ctx->thread_created) {
         atomic_store(&ctx->thread_running, false);
         pthread_join(ctx->thread, NULL);
+        ctx->thread_created = false;
     }
 
-    /* Release any held buffer */
+    /* Release any held buffer back to the driver. */
     capture_release_frame(ctx);
 
-    /* Drain mailbox */
     int drained = -1;
     if (capture_mailbox_drain(&ctx->mailbox, &drained) == 0)
         requeue_buffer(ctx, drained);
@@ -316,6 +372,12 @@ static void capture_stop(struct capture_ctx *ctx)
         }
     }
     ctx->num_buffers = 0;
+}
+
+/* Close-path wrapper: tear down streaming, destroy the mailbox. */
+static void capture_stop(struct capture_ctx *ctx)
+{
+    capture_tear_down_streaming(ctx);
 
     capture_mailbox_destroy(&ctx->mailbox);
 }

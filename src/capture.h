@@ -25,10 +25,12 @@ struct capture_ctx {
 
     /* Threading */
     pthread_t thread;
+    bool thread_created;             /* set once pthread_create succeeds */
     _Atomic bool thread_running;
     struct capture_mailbox mailbox;
-    int prev_buf_index; /* buffer held by render thread, to be requeued */
-    uint32_t sdl_event_type; /* registered SDL custom event type */
+    int prev_buf_index;              /* buffer held by render thread */
+    uint32_t frame_event_type;       /* SDL event for a new frame */
+    uint32_t reinit_event_type;      /* SDL event for source format change */
 };
 
 /* Open a V4L2 capture device and negotiate format.
@@ -39,13 +41,24 @@ int capture_open(struct capture_ctx *ctx, const char *device,
                  uint32_t req_pixfmt, int req_width, int req_height);
 
 /* Set up mmap buffers, start streaming, and launch capture thread.
- * sdl_event_type is a registered SDL custom event type for new-frame signals.
+ * frame_event_type: SDL custom event raised when a new frame arrives.
+ * reinit_event_type: SDL custom event raised when the source format
+ *                    changes (V4L2_EVENT_SOURCE_CHANGE). On receipt the
+ *                    main thread should call capture_reinit().
  * Returns 0 on success, -1 on failure. */
-int capture_start(struct capture_ctx *ctx, uint32_t sdl_event_type);
+int capture_start(struct capture_ctx *ctx,
+                  uint32_t frame_event_type,
+                  uint32_t reinit_event_type);
 
 /* Get the latest frame from the mailbox (non-blocking).
  * Returns 0 if a new frame is available, -1 if not. */
 int capture_get_frame(struct capture_ctx *ctx, struct frame_info *frame);
+
+/* Re-read the source format and rebuild buffers/stream. Call from the
+ * main thread after a reinit_event_type is observed. The capture thread
+ * has already stopped itself by this point. Updates ctx->width / height
+ * / pixfmt to the new values. Returns 0 on success, -1 on failure. */
+int capture_reinit(struct capture_ctx *ctx);
 
 /* Stop streaming, join the thread, release resources, and close the device. */
 void capture_close(struct capture_ctx *ctx);
