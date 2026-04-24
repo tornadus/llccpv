@@ -93,10 +93,6 @@ void render_upload_frame(struct render_ctx *ctx, const struct frame_info *frame)
  * out_w/out_h is the viewport size for the final pass. */
 void render_draw(struct render_ctx *ctx, int out_w, int out_h);
 
-/* Handle source resolution or format change. */
-int render_resize(struct render_ctx *ctx, int width, int height,
-                  uint32_t pixfmt, const char *shader_dir);
-
 /* Set FSR RCAS sharpness (0.0 = maximum, 2.0 = soft). Only effective in FSR mode. */
 void render_set_sharpness(struct render_ctx *ctx, float sharpness);
 

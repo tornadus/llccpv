@@ -475,22 +475,6 @@ void render_draw(struct render_ctx *ctx, int out_w, int out_h)
     glUseProgram(0);
 }
 
-int render_resize(struct render_ctx *ctx, int width, int height,
-                  uint32_t pixfmt, const char *shader_dir)
-{
-    if (pixfmt != ctx->pixfmt) {
-        if (load_conv_shader(ctx, pixfmt, shader_dir) < 0)
-            return -1;
-    }
-
-    setup_source_textures(ctx, width, height, pixfmt);
-    setup_fbo(ctx, width, height);
-    ctx->fsr_out_w = 0;
-    ctx->fsr_out_h = 0;
-    LOG_INFO("Renderer resized: %dx%d, pixfmt=0x%08x", width, height, pixfmt);
-    return 0;
-}
-
 void render_set_sharpness(struct render_ctx *ctx, float sharpness)
 {
     ctx->rcas_sharpness = sharpness;
