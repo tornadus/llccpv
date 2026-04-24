@@ -295,7 +295,7 @@ int capture_get_frame(struct capture_ctx *ctx, struct frame_info *frame)
     return 0;
 }
 
-void capture_release_frame(struct capture_ctx *ctx)
+static void capture_release_frame(struct capture_ctx *ctx)
 {
     if (ctx->prev_buf_index >= 0) {
         requeue_buffer(ctx, ctx->prev_buf_index);
@@ -303,7 +303,7 @@ void capture_release_frame(struct capture_ctx *ctx)
     }
 }
 
-void capture_stop(struct capture_ctx *ctx)
+static void capture_stop(struct capture_ctx *ctx)
 {
     /* Stop the capture thread */
     if (atomic_load(&ctx->thread_running)) {

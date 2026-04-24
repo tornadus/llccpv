@@ -53,13 +53,7 @@ int capture_start(struct capture_ctx *ctx, uint32_t sdl_event_type);
  * Returns 0 if a new frame is available, -1 if not. */
 int capture_get_frame(struct capture_ctx *ctx, struct frame_info *frame);
 
-/* Release the previously held frame buffer back to V4L2. */
-void capture_release_frame(struct capture_ctx *ctx);
-
-/* Stop streaming, join thread, and release resources. */
-void capture_stop(struct capture_ctx *ctx);
-
-/* Close the device. */
+/* Stop streaming, join the thread, release resources, and close the device. */
 void capture_close(struct capture_ctx *ctx);
 
 #endif

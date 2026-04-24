@@ -1,7 +1,7 @@
 #include "shader.h"
 #include "util.h"
 
-GLuint shader_compile(GLenum type, const char *source)
+static GLuint shader_compile(GLenum type, const char *source)
 {
     GLuint shader = glCreateShader(type);
     glShaderSource(shader, 1, &source, NULL);
@@ -19,7 +19,7 @@ GLuint shader_compile(GLenum type, const char *source)
     return shader;
 }
 
-GLuint shader_link(GLuint vert, GLuint frag)
+static GLuint shader_link(GLuint vert, GLuint frag)
 {
     GLuint prog = glCreateProgram();
     glAttachShader(prog, vert);
@@ -38,7 +38,7 @@ GLuint shader_link(GLuint vert, GLuint frag)
     return prog;
 }
 
-char *shader_load_file(const char *path)
+static char *shader_load_file(const char *path)
 {
     FILE *f = fopen(path, "r");
     if (!f) {
@@ -62,7 +62,7 @@ char *shader_load_file(const char *path)
     return buf;
 }
 
-char *shader_preprocess(const char *source, const char *include_dir)
+static char *shader_preprocess(const char *source, const char *include_dir)
 {
     /* Estimate output size (includes expand it) */
     size_t cap = strlen(source) * 2 + 4096;
