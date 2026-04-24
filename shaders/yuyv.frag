@@ -16,7 +16,7 @@ void main()
     u_raw = yuyv.g;
     v_raw = yuyv.a;
 
-    if (fract(pixel_x * 0.5) < 0.25)
+    if (fract(pixel_x * 0.5) < 0.5)
         y_raw = yuyv.r;
     else
         y_raw = yuyv.b;
