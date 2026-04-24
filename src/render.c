@@ -481,6 +481,33 @@ void render_set_sharpness(struct render_ctx *ctx, float sharpness)
     fsr_rcas_con(ctx->rcas_con, sharpness);
 }
 
+int render_readback_fbo(struct render_ctx *ctx, uint8_t *out_rgb, int w, int h)
+{
+    if (!ctx->fbo || w != ctx->src_width || h != ctx->src_height)
+        return -1;
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, ctx->fbo);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, out_rgb);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+
+    /* glReadPixels returns GL orientation (bottom-first); flip to top-first
+     * so row 0 matches the input frame's row 0. */
+    size_t row_bytes = (size_t)w * 3;
+    uint8_t *tmp = malloc(row_bytes);
+    if (!tmp)
+        return -1;
+    for (int y = 0; y < h / 2; y++) {
+        uint8_t *top = out_rgb + (size_t)y * row_bytes;
+        uint8_t *bot = out_rgb + (size_t)(h - 1 - y) * row_bytes;
+        memcpy(tmp, top, row_bytes);
+        memcpy(top, bot, row_bytes);
+        memcpy(bot, tmp, row_bytes);
+    }
+    free(tmp);
+    return 0;
+}
+
 void render_cleanup(struct render_ctx *ctx)
 {
     if (ctx->conv_program) {

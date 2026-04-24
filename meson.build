@@ -7,6 +7,8 @@ gl_dep = dependency('gl')
 threads_dep = dependency('threads')
 pipewire_dep = dependency('libpipewire-0.3')
 qt6_dep = dependency('qt6', modules : ['Core', 'Widgets'])
+cc = meson.get_compiler('c')
+m_dep = cc.find_library('m', required : false)
 
 install_data(
   'shaders/quad.vert',
@@ -26,15 +28,50 @@ install_data(
   install_dir : get_option('datadir') / 'llccpv' / 'shaders' / 'ffx',
 )
 
-src = files(
-  'src/main.c',
-  'src/capture.c',
-  'src/render.c',
-  'src/shader.c',
-  'src/audio.c',
-  'src/picker.cpp',
+# Core render + shader code shared by the app and tests.
+render_core = static_library('render_core',
+  ['src/render.c', 'src/shader.c'],
+  dependencies : [gl_dep, m_dep],
 )
 
-executable('llccpv', src,
+executable('llccpv',
+  ['src/main.c', 'src/capture.c', 'src/capture_mailbox.c',
+   'src/audio.c', 'src/ring.c', 'src/picker.cpp'],
+  link_with : render_core,
   dependencies : [sdl3_dep, gl_dep, pipewire_dep, threads_dep, qt6_dep],
   install : true)
+
+# --- Tests ---
+src_inc = include_directories('src')
+
+test_support = files(
+  'tests/support/gl_harness.c',
+  'tests/support/ref_yuv.c',
+  'tests/support/ref_scale.c',
+  'tests/support/fixtures.c',
+)
+
+test_pixel = executable('test_pixel',
+  ['tests/test_pixel.c', test_support],
+  include_directories : src_inc,
+  link_with : render_core,
+  dependencies : [sdl3_dep, gl_dep, m_dep],
+  build_by_default : false,
+)
+test('pixel', test_pixel, workdir : meson.project_source_root())
+
+test_audio = executable('test_audio',
+  ['tests/test_audio.c', 'src/ring.c'],
+  include_directories : src_inc,
+  dependencies : [threads_dep],
+  build_by_default : false,
+)
+test('audio', test_audio, timeout : 10)
+
+test_capture_mailbox = executable('test_capture_mailbox',
+  ['tests/test_capture_mailbox.c', 'src/capture_mailbox.c'],
+  include_directories : src_inc,
+  dependencies : [threads_dep],
+  build_by_default : false,
+)
+test('capture_mailbox', test_capture_mailbox, timeout : 10)

@@ -96,6 +96,12 @@ void render_draw(struct render_ctx *ctx, int out_w, int out_h);
 /* Set FSR RCAS sharpness (0.0 = maximum, 2.0 = soft). Only effective in FSR mode. */
 void render_set_sharpness(struct render_ctx *ctx, float sharpness);
 
+/* Read back the conversion-pass FBO as packed RGB8 (w*h*3 bytes).
+ * w/h must match the render_init() source dimensions. Output rows are
+ * top-first (row 0 is the top of the source image, matching the input
+ * frame's memory layout). Returns 0 on success, -1 on error. */
+int render_readback_fbo(struct render_ctx *ctx, uint8_t *out_rgb, int w, int h);
+
 /* Clean up GL resources. */
 void render_cleanup(struct render_ctx *ctx);
 

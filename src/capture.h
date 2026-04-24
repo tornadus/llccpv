@@ -2,6 +2,7 @@
 #define LLCCPV_CAPTURE_H
 
 #include "util.h"
+#include "capture_mailbox.h"
 
 #include <pthread.h>
 #include <stdatomic.h>
@@ -11,13 +12,6 @@
 struct capture_buffer {
     void *start;
     size_t length;
-};
-
-/* Mailbox slot: holds the latest frame info for the render thread. */
-struct capture_mailbox {
-    struct frame_info frame;
-    _Atomic bool has_frame;
-    pthread_mutex_t lock;
 };
 
 struct capture_ctx {

@@ -62,23 +62,18 @@ static void *capture_thread_func(void *arg)
             break;
         }
 
-        /* Write to mailbox: replace the old frame if render hasn't picked it up */
-        pthread_mutex_lock(&ctx->mailbox.lock);
-
-        /* If there was an unconsumed frame in the mailbox, requeue its buffer */
-        if (atomic_load(&ctx->mailbox.has_frame)) {
-            requeue_buffer(ctx, ctx->mailbox.frame.buf_index);
-        }
-
-        ctx->mailbox.frame.data = ctx->buffers[buf.index].start;
-        ctx->mailbox.frame.size = buf.bytesused;
-        ctx->mailbox.frame.width = ctx->width;
-        ctx->mailbox.frame.height = ctx->height;
-        ctx->mailbox.frame.pixfmt = ctx->pixfmt;
-        ctx->mailbox.frame.buf_index = buf.index;
-        atomic_store(&ctx->mailbox.has_frame, true);
-
-        pthread_mutex_unlock(&ctx->mailbox.lock);
+        struct frame_info f = {
+            .data      = ctx->buffers[buf.index].start,
+            .size      = buf.bytesused,
+            .width     = ctx->width,
+            .height    = ctx->height,
+            .pixfmt    = ctx->pixfmt,
+            .buf_index = buf.index,
+        };
+        int displaced = -1;
+        capture_mailbox_publish(&ctx->mailbox, &f, &displaced);
+        if (displaced >= 0)
+            requeue_buffer(ctx, displaced);
 
         /* Signal the main/render thread that a new frame is available */
         SDL_Event event = { .type = ctx->sdl_event_type };
@@ -94,7 +89,7 @@ int capture_open(struct capture_ctx *ctx, const char *device,
     memset(ctx, 0, sizeof(*ctx));
     ctx->fd = -1;
     ctx->prev_buf_index = -1;
-    pthread_mutex_init(&ctx->mailbox.lock, NULL);
+    capture_mailbox_init(&ctx->mailbox);
 
     int fd = open(device, O_RDWR | O_NONBLOCK);
     if (fd < 0) {
@@ -273,25 +268,13 @@ int capture_start(struct capture_ctx *ctx, uint32_t sdl_event_type)
 
 int capture_get_frame(struct capture_ctx *ctx, struct frame_info *frame)
 {
-    if (!atomic_load(&ctx->mailbox.has_frame))
+    if (capture_mailbox_consume(&ctx->mailbox, frame) != 0)
         return -1;
-
-    pthread_mutex_lock(&ctx->mailbox.lock);
-
-    if (!atomic_load(&ctx->mailbox.has_frame)) {
-        pthread_mutex_unlock(&ctx->mailbox.lock);
-        return -1;
-    }
 
     /* Release the buffer the render thread was holding from the previous frame */
     if (ctx->prev_buf_index >= 0)
         requeue_buffer(ctx, ctx->prev_buf_index);
-
-    *frame = ctx->mailbox.frame;
     ctx->prev_buf_index = frame->buf_index;
-    atomic_store(&ctx->mailbox.has_frame, false);
-
-    pthread_mutex_unlock(&ctx->mailbox.lock);
     return 0;
 }
 
@@ -315,12 +298,9 @@ static void capture_stop(struct capture_ctx *ctx)
     capture_release_frame(ctx);
 
     /* Drain mailbox */
-    pthread_mutex_lock(&ctx->mailbox.lock);
-    if (atomic_load(&ctx->mailbox.has_frame)) {
-        requeue_buffer(ctx, ctx->mailbox.frame.buf_index);
-        atomic_store(&ctx->mailbox.has_frame, false);
-    }
-    pthread_mutex_unlock(&ctx->mailbox.lock);
+    int drained = -1;
+    if (capture_mailbox_drain(&ctx->mailbox, &drained) == 0)
+        requeue_buffer(ctx, drained);
 
     if (ctx->streaming) {
         enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -337,7 +317,7 @@ static void capture_stop(struct capture_ctx *ctx)
     }
     ctx->num_buffers = 0;
 
-    pthread_mutex_destroy(&ctx->mailbox.lock);
+    capture_mailbox_destroy(&ctx->mailbox);
 }
 
 void capture_close(struct capture_ctx *ctx)
