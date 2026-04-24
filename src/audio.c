@@ -21,11 +21,6 @@ struct ring_buf {
     _Atomic uint32_t write_pos;
 };
 
-static uint32_t ring_available(struct ring_buf *r)
-{
-    return atomic_load(&r->write_pos) - atomic_load(&r->read_pos);
-}
-
 static void ring_write(struct ring_buf *r, const float *src, uint32_t count)
 {
     uint32_t wp = atomic_load(&r->write_pos);
@@ -36,16 +31,26 @@ static void ring_write(struct ring_buf *r, const float *src, uint32_t count)
 
 static void ring_read(struct ring_buf *r, float *dst, uint32_t count)
 {
+    uint32_t wp = atomic_load(&r->write_pos);
     uint32_t rp = atomic_load(&r->read_pos);
-    uint32_t avail = ring_available(r);
-    for (uint32_t i = 0; i < count; i++) {
-        if (i < avail)
-            dst[i] = r->data[(rp + i) & RING_MASK];
-        else
-            dst[i] = 0.0f; /* underrun: silence */
+    uint32_t avail = wp - rp;
+
+    /* If the writer has lapped us, the oldest samples have been overwritten.
+     * Snap forward and discard the backlog. SPSC requires that only the
+     * reader mutates read_pos, so overflow handling lives here, not in the
+     * writer. */
+    if (avail > RING_SAMPLES) {
+        rp = wp - (RING_SAMPLES - 256);
+        avail = wp - rp;
     }
-    uint32_t consumed = count < avail ? count : avail;
-    atomic_store(&r->read_pos, rp + consumed);
+
+    uint32_t to_copy = count < avail ? count : avail;
+    for (uint32_t i = 0; i < to_copy; i++)
+        dst[i] = r->data[(rp + i) & RING_MASK];
+    for (uint32_t i = to_copy; i < count; i++)
+        dst[i] = 0.0f; /* underrun: silence */
+
+    atomic_store(&r->read_pos, rp + to_copy);
 }
 
 struct audio_ctx {
@@ -87,13 +92,6 @@ static void on_capture_process(void *data)
 
     uint32_t n_bytes = spa_buf->datas[0].chunk->size;
     uint32_t n_samples = n_bytes / sizeof(float);
-
-    /* Drop oldest data if ring is getting full */
-    if (ring_available(&ctx->ring) + n_samples > RING_SAMPLES) {
-        uint32_t drop = ring_available(&ctx->ring) + n_samples - RING_SAMPLES + 256;
-        atomic_store(&ctx->ring.read_pos,
-                     atomic_load(&ctx->ring.read_pos) + drop);
-    }
 
     ring_write(&ctx->ring, samples, n_samples);
     pw_stream_queue_buffer(ctx->capture, buf);
