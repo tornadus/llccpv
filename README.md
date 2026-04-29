@@ -57,6 +57,7 @@ sudo dnf install -y SDL3-devel mesa-libGL-devel pipewire-devel qt6-qtbase-devel 
 | `-S` | `--scale` | `MODE` | Scale mode: `nearest`, `bilinear` (default), `sharp`, `fsr` |
 | `-P` | `--sharpness` | `VALUE` | FSR sharpness: `0.0` (max) to `2.0` (soft), default `0.2` |
 | `-r` | `--range` | `MODE` | Color range: `limited` (default, TV/16-235) or `full` (PC/0-255) |
+| `-c` | `--matrix` | `MODE` | YUV→RGB matrix: `auto` (default, detected from V4L2), `bt601`, or `bt709` |
 | `-v` | `--vsync` | `MODE` | Vsync: `0` off, `1` on, `-1` adaptive (default) |
 | `-h` | `--help` | | Show help and exit |
 

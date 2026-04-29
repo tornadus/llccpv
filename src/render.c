@@ -251,6 +251,7 @@ static int load_conv_shader(struct render_ctx *ctx, uint32_t pixfmt, const char 
     setup_conv_uniforms(ctx, pixfmt);
     ctx->conv_loc_y_flip = glGetUniformLocation(ctx->conv_program, "y_flip");
     ctx->conv_loc_color_range = glGetUniformLocation(ctx->conv_program, "color_range");
+    ctx->conv_loc_color_matrix = glGetUniformLocation(ctx->conv_program, "color_matrix");
     return 0;
 }
 
@@ -311,13 +312,15 @@ static int load_fsr_shaders(struct render_ctx *ctx, const char *shader_dir)
 
 int render_init(struct render_ctx *ctx, int width, int height,
                 uint32_t pixfmt, enum scale_mode mode,
-                enum color_range range, const char *shader_dir)
+                enum color_range range, enum color_matrix matrix,
+                const char *shader_dir)
 {
     memset(ctx, 0, sizeof(*ctx));
     ctx->conv_loc_tex_uv = -1;
     ctx->conv_loc_tex_size = -1;
     ctx->scale_mode = mode;
     ctx->color_range = range;
+    ctx->color_matrix = matrix;
 
     if (load_conv_shader(ctx, pixfmt, shader_dir) < 0)
         return -1;
@@ -391,6 +394,8 @@ void render_draw(struct render_ctx *ctx, int out_w, int out_h)
     glUniform1f(ctx->conv_loc_y_flip, 1.0f); /* flip: source texture is top-row-first */
     if (ctx->conv_loc_color_range >= 0)
         glUniform1i(ctx->conv_loc_color_range, ctx->color_range);
+    if (ctx->conv_loc_color_matrix >= 0)
+        glUniform1i(ctx->conv_loc_color_matrix, ctx->color_matrix);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, ctx->textures[0]);

@@ -21,6 +21,11 @@ enum color_range {
     RANGE_FULL = 1,    /* PC: 0-255 */
 };
 
+enum color_matrix {
+    MATRIX_BT601 = 0, /* SDTV (480i/576i) */
+    MATRIX_BT709 = 1, /* HDTV (720p+) */
+};
+
 struct render_ctx {
     /* Color conversion pass */
     GLuint conv_program;
@@ -32,6 +37,8 @@ struct render_ctx {
     GLint conv_loc_y_flip;
     GLint conv_loc_color_range;
     enum color_range color_range;
+    GLint conv_loc_color_matrix;
+    enum color_matrix color_matrix;
     int tex_width;
     int tex_height;
 
@@ -82,7 +89,8 @@ struct render_ctx {
  * Returns 0 on success, -1 on failure. */
 int render_init(struct render_ctx *ctx, int width, int height,
                 uint32_t pixfmt, enum scale_mode mode,
-                enum color_range range, const char *shader_dir);
+                enum color_range range, enum color_matrix matrix,
+                const char *shader_dir);
 
 /* Upload a new frame to the GPU texture(s). */
 void render_upload_frame(struct render_ctx *ctx, const struct frame_info *frame);

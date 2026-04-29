@@ -2,7 +2,8 @@
 
 uniform sampler2D tex_yuyv;
 uniform vec2 tex_size; /* actual pixel dimensions (width, height) */
-uniform int color_range; /* 0 = limited (TV, 16-235), 1 = full (PC, 0-255) */
+uniform int color_range;  /* 0 = limited (TV, 16-235), 1 = full (PC, 0-255) */
+uniform int color_matrix; /* 0 = BT.601, 1 = BT.709 */
 
 in vec2 v_uv;
 out vec4 frag_color;
@@ -35,11 +36,21 @@ void main()
         v = v_raw - 0.5;
     }
 
-    /* BT.601 YUV -> RGB */
-    frag_color = vec4(
-        y + 1.402 * v,
-        y - 0.344136 * u - 0.714136 * v,
-        y + 1.772 * u,
-        1.0
-    );
+    vec3 rgb;
+    if (color_matrix == 1) {
+        /* BT.709 YUV -> RGB */
+        rgb = vec3(
+            y + 1.5748   * v,
+            y - 0.187324 * u - 0.468124 * v,
+            y + 1.8556   * u
+        );
+    } else {
+        /* BT.601 YUV -> RGB */
+        rgb = vec3(
+            y + 1.402    * v,
+            y - 0.344136 * u - 0.714136 * v,
+            y + 1.772    * u
+        );
+    }
+    frag_color = vec4(rgb, 1.0);
 }

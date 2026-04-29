@@ -88,6 +88,7 @@ int main(int argc, char *argv[])
     int vsync_mode = -1;
     enum scale_mode scale = SCALE_BILINEAR;
     enum color_range range = RANGE_LIMITED;
+    int matrix_override = -1; /* -1 = auto, else MATRIX_BT601/MATRIX_BT709 */
     float sharpness = -1.0f;
     int exit_after_ms = 0;
     int frames_limit = 0;
@@ -108,6 +109,7 @@ int main(int argc, char *argv[])
         {"stretch",      no_argument,       NULL, 's'},
         {"scale",        required_argument, NULL, 'S'},
         {"range",        required_argument, NULL, 'r'},
+        {"matrix",       required_argument, NULL, 'c'},
         {"sharpness",    required_argument, NULL, 'P'},
         {"vsync",        required_argument, NULL, 'v'},
         {"exit-after",   required_argument, NULL, OPT_EXIT_AFTER},
@@ -119,7 +121,7 @@ int main(int argc, char *argv[])
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "d:a:nfS:r:P:sv:h", long_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "d:a:nfS:r:c:P:sv:h", long_opts, NULL)) != -1) {
         switch (opt) {
         case 'd': device = optarg; break;
         case 'a': audio_source = optarg; break;
@@ -144,6 +146,15 @@ int main(int argc, char *argv[])
                 return 1;
             }
             break;
+        case 'c':
+            if (strcmp(optarg, "auto") == 0)        matrix_override = -1;
+            else if (strcmp(optarg, "bt601") == 0)   matrix_override = MATRIX_BT601;
+            else if (strcmp(optarg, "bt709") == 0)   matrix_override = MATRIX_BT709;
+            else {
+                LOG_ERROR("Unknown matrix: %s (use auto, bt601, bt709)", optarg);
+                return 1;
+            }
+            break;
         case 'P': sharpness = strtof(optarg, NULL); break;
         case 'v': vsync_mode = atoi(optarg); break;
         case OPT_EXIT_AFTER: exit_after_ms  = atoi(optarg); break;
@@ -161,6 +172,7 @@ int main(int argc, char *argv[])
                 "  -S, --scale MODE         nearest, bilinear (default), sharp, fsr\n"
                 "  -P, --sharpness VALUE    FSR sharpness: 0.0 (max) to 2.0 (soft), default 0.2\n"
                 "  -r, --range MODE         limited (default, TV), full (PC)\n"
+                "  -c, --matrix MODE        YUV->RGB matrix: auto (default), bt601, bt709\n"
                 "  -v, --vsync MODE         0=off, 1=on, -1=adaptive (default)\n"
                 "      --exit-after MS      Auto-quit after MS milliseconds\n"
                 "      --frames N           Auto-quit after rendering N frames\n"
@@ -254,7 +266,13 @@ int main(int argc, char *argv[])
     if (pick.sharpness >= 0.0f)
         sharpness = pick.sharpness;
 
-    if (render_init(&rctx, cap.width, cap.height, cap.pixfmt, scale, range, shader_dir) < 0) {
+    enum color_matrix matrix = matrix_override >= 0 ? (enum color_matrix)matrix_override
+                                                    : (enum color_matrix)cap.color_matrix;
+    if (matrix_override >= 0)
+        LOG_INFO("YUV->RGB matrix: %s (CLI override)",
+                 matrix == MATRIX_BT709 ? "BT.709" : "BT.601");
+
+    if (render_init(&rctx, cap.width, cap.height, cap.pixfmt, scale, range, matrix, shader_dir) < 0) {
         SDL_GL_DestroyContext(gl_ctx);
         SDL_DestroyWindow(window);
         capture_close(&cap);
@@ -341,8 +359,11 @@ int main(int argc, char *argv[])
                 running = false;
                 break;
             }
+            enum color_matrix new_matrix = matrix_override >= 0
+                ? (enum color_matrix)matrix_override
+                : (enum color_matrix)cap.color_matrix;
             if (render_init(&rctx, cap.width, cap.height, cap.pixfmt,
-                            scale, range, shader_dir) < 0) {
+                            scale, range, new_matrix, shader_dir) < 0) {
                 LOG_ERROR("render_init after reinit failed; exiting");
                 running = false;
                 break;

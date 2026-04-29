@@ -62,7 +62,7 @@ TEST(smoke_black_yuyv_8x8)
 {
     struct render_ctx ctx;
     REQUIRE(render_init(&ctx, 8, 8, V4L2_PIX_FMT_YUYV,
-                        SCALE_NEAREST, RANGE_FULL, "shaders") == 0,
+                        SCALE_NEAREST, RANGE_FULL, MATRIX_BT601, "shaders") == 0,
             "render_init failed");
     uint8_t buf[fixture_yuyv_size(8, 8)];
     fixture_yuyv_solid(buf, 8, 8, 0, 128, 128);
@@ -87,7 +87,7 @@ static int check_solid_yuyv(uint8_t y, uint8_t u, uint8_t v,
     const int W = 8, H = 8;
     struct render_ctx ctx;
     if (render_init(&ctx, W, H, V4L2_PIX_FMT_YUYV,
-                    SCALE_NEAREST, range, "shaders") != 0) {
+                    SCALE_NEAREST, range, MATRIX_BT601, "shaders") != 0) {
         fprintf(stderr, "render_init failed (%s)\n", label);
         return 1;
     }
@@ -175,7 +175,7 @@ TEST(yuyv_luma_ramp_limited)
     const int W = 16, H = 2;
     struct render_ctx ctx;
     REQUIRE(render_init(&ctx, W, H, V4L2_PIX_FMT_YUYV,
-                        SCALE_NEAREST, RANGE_LIMITED, "shaders") == 0,
+                        SCALE_NEAREST, RANGE_LIMITED, MATRIX_BT601, "shaders") == 0,
             "render_init failed");
 
     uint8_t buf[fixture_yuyv_size(16, 2)];
@@ -207,7 +207,7 @@ TEST(yuyv_chroma_share)
     const int W = 4, H = 2;
     struct render_ctx ctx;
     REQUIRE(render_init(&ctx, W, H, V4L2_PIX_FMT_YUYV,
-                        SCALE_NEAREST, RANGE_FULL, "shaders") == 0,
+                        SCALE_NEAREST, RANGE_FULL, MATRIX_BT601, "shaders") == 0,
             "render_init failed");
 
     uint8_t buf[fixture_yuyv_size(4, 2)];
@@ -241,7 +241,7 @@ TEST(yuyv_y_flip_preserves_row_order)
     const int W = 8, H = 8;
     struct render_ctx ctx;
     REQUIRE(render_init(&ctx, W, H, V4L2_PIX_FMT_YUYV,
-                        SCALE_NEAREST, RANGE_FULL, "shaders") == 0,
+                        SCALE_NEAREST, RANGE_FULL, MATRIX_BT601, "shaders") == 0,
             "render_init failed");
 
     uint8_t buf[fixture_yuyv_size(8, 8)];
@@ -281,7 +281,7 @@ static int check_solid_uyvy(uint8_t y, uint8_t u, uint8_t v,
     const int W = 8, H = 8;
     struct render_ctx ctx;
     if (render_init(&ctx, W, H, V4L2_PIX_FMT_UYVY,
-                    SCALE_NEAREST, range, "shaders") != 0) {
+                    SCALE_NEAREST, range, MATRIX_BT601, "shaders") != 0) {
         fprintf(stderr, "render_init failed (%s)\n", label);
         return 1;
     }
@@ -328,7 +328,7 @@ static int check_solid_nv12(uint8_t y, uint8_t u, uint8_t v,
     const int W = 8, H = 8;
     struct render_ctx ctx;
     if (render_init(&ctx, W, H, V4L2_PIX_FMT_NV12,
-                    SCALE_NEAREST, range, "shaders") != 0) {
+                    SCALE_NEAREST, range, MATRIX_BT601, "shaders") != 0) {
         fprintf(stderr, "render_init failed (%s)\n", label);
         return 1;
     }
@@ -377,7 +377,7 @@ TEST(scale_nearest_identity_bit_exact)
     const int W = 8;
     struct render_ctx ctx;
     REQUIRE(render_init(&ctx, W, W, V4L2_PIX_FMT_YUYV,
-                        SCALE_NEAREST, RANGE_FULL, "shaders") == 0,
+                        SCALE_NEAREST, RANGE_FULL, MATRIX_BT601, "shaders") == 0,
             "render_init failed");
 
     uint8_t buf[fixture_yuyv_size(8, 8)];
@@ -403,7 +403,7 @@ TEST(scale_nearest_2x_upscale_bit_exact)
     const int SRC = 4, OUT = 8;
     struct render_ctx ctx;
     REQUIRE(render_init(&ctx, SRC, SRC, V4L2_PIX_FMT_YUYV,
-                        SCALE_NEAREST, RANGE_FULL, "shaders") == 0,
+                        SCALE_NEAREST, RANGE_FULL, MATRIX_BT601, "shaders") == 0,
             "render_init failed");
 
     uint8_t buf[fixture_yuyv_size(4, 4)];
@@ -433,7 +433,7 @@ TEST(scale_bilinear_identity)
     const int W = 8;
     struct render_ctx ctx;
     REQUIRE(render_init(&ctx, W, W, V4L2_PIX_FMT_YUYV,
-                        SCALE_BILINEAR, RANGE_FULL, "shaders") == 0,
+                        SCALE_BILINEAR, RANGE_FULL, MATRIX_BT601, "shaders") == 0,
             "render_init failed");
 
     uint8_t buf[fixture_yuyv_size(8, 8)];
@@ -457,7 +457,7 @@ TEST(scale_sharp_bilinear_identity)
     const int W = 8;
     struct render_ctx ctx;
     REQUIRE(render_init(&ctx, W, W, V4L2_PIX_FMT_YUYV,
-                        SCALE_SHARP_BILINEAR, RANGE_FULL, "shaders") == 0,
+                        SCALE_SHARP_BILINEAR, RANGE_FULL, MATRIX_BT601, "shaders") == 0,
             "render_init failed");
 
     uint8_t buf[fixture_yuyv_size(8, 8)];
@@ -481,7 +481,7 @@ TEST(scale_sharp_bilinear_solid_in_solid_out)
     const int SRC = 8, OUT = 24;
     struct render_ctx ctx;
     REQUIRE(render_init(&ctx, SRC, SRC, V4L2_PIX_FMT_YUYV,
-                        SCALE_SHARP_BILINEAR, RANGE_FULL, "shaders") == 0,
+                        SCALE_SHARP_BILINEAR, RANGE_FULL, MATRIX_BT601, "shaders") == 0,
             "render_init failed");
 
     uint8_t buf[fixture_yuyv_size(8, 8)];
@@ -518,7 +518,7 @@ TEST(fsr_solid_color_stays_solid)
     const int SRC = 8, OUT = 32;
     struct render_ctx ctx;
     REQUIRE(render_init(&ctx, SRC, SRC, V4L2_PIX_FMT_YUYV,
-                        SCALE_FSR, RANGE_FULL, "shaders") == 0,
+                        SCALE_FSR, RANGE_FULL, MATRIX_BT601, "shaders") == 0,
             "render_init failed");
 
     uint8_t buf[fixture_yuyv_size(8, 8)];
@@ -551,7 +551,7 @@ TEST(fsr_output_size_matches_viewport)
     const int SRC = 8, OUT = 24;
     struct render_ctx ctx;
     REQUIRE(render_init(&ctx, SRC, SRC, V4L2_PIX_FMT_YUYV,
-                        SCALE_FSR, RANGE_FULL, "shaders") == 0,
+                        SCALE_FSR, RANGE_FULL, MATRIX_BT601, "shaders") == 0,
             "render_init failed");
 
     uint8_t buf[fixture_yuyv_size(8, 8)];
@@ -602,7 +602,7 @@ TEST(fsr_rcas_sharpness_monotonic)
     const int SRC = 8, OUT = 32;
     struct render_ctx ctx;
     REQUIRE(render_init(&ctx, SRC, SRC, V4L2_PIX_FMT_YUYV,
-                        SCALE_FSR, RANGE_FULL, "shaders") == 0,
+                        SCALE_FSR, RANGE_FULL, MATRIX_BT601, "shaders") == 0,
             "render_init failed");
 
     uint8_t buf[fixture_yuyv_size(8, 8)];

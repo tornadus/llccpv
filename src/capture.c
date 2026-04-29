@@ -19,6 +19,116 @@ static int xioctl(int fd, unsigned long request, void *arg)
     return r;
 }
 
+static const char *colorspace_name(__u32 v)
+{
+    switch (v) {
+    case V4L2_COLORSPACE_DEFAULT:       return "DEFAULT";
+    case V4L2_COLORSPACE_SMPTE170M:     return "SMPTE170M (BT.601)";
+    case V4L2_COLORSPACE_SMPTE240M:     return "SMPTE240M";
+    case V4L2_COLORSPACE_REC709:        return "REC709 (BT.709)";
+    case V4L2_COLORSPACE_BT878:         return "BT878";
+    case V4L2_COLORSPACE_470_SYSTEM_M:  return "470_SYSTEM_M";
+    case V4L2_COLORSPACE_470_SYSTEM_BG: return "470_SYSTEM_BG";
+    case V4L2_COLORSPACE_JPEG:          return "JPEG";
+    case V4L2_COLORSPACE_SRGB:          return "SRGB";
+    case V4L2_COLORSPACE_OPRGB:         return "OPRGB";
+    case V4L2_COLORSPACE_BT2020:        return "BT2020";
+    case V4L2_COLORSPACE_RAW:           return "RAW";
+    case V4L2_COLORSPACE_DCI_P3:        return "DCI_P3";
+    default:                            return "?";
+    }
+}
+
+static const char *ycbcr_enc_name(__u32 v)
+{
+    switch (v) {
+    case V4L2_YCBCR_ENC_DEFAULT:         return "DEFAULT";
+    case V4L2_YCBCR_ENC_601:             return "BT.601";
+    case V4L2_YCBCR_ENC_709:             return "BT.709";
+    case V4L2_YCBCR_ENC_XV601:           return "XV601";
+    case V4L2_YCBCR_ENC_XV709:           return "XV709";
+    case V4L2_YCBCR_ENC_BT2020:          return "BT2020";
+    case V4L2_YCBCR_ENC_BT2020_CONST_LUM:return "BT2020_CONST_LUM";
+    case V4L2_YCBCR_ENC_SMPTE240M:       return "SMPTE240M";
+    default:                             return "?";
+    }
+}
+
+static const char *quantization_name(__u32 v)
+{
+    switch (v) {
+    case V4L2_QUANTIZATION_DEFAULT:    return "DEFAULT";
+    case V4L2_QUANTIZATION_FULL_RANGE: return "FULL_RANGE";
+    case V4L2_QUANTIZATION_LIM_RANGE:  return "LIM_RANGE";
+    default:                           return "?";
+    }
+}
+
+static const char *xfer_func_name(__u32 v)
+{
+    switch (v) {
+    case V4L2_XFER_FUNC_DEFAULT:   return "DEFAULT";
+    case V4L2_XFER_FUNC_709:       return "709";
+    case V4L2_XFER_FUNC_SRGB:      return "SRGB";
+    case V4L2_XFER_FUNC_OPRGB:     return "OPRGB";
+    case V4L2_XFER_FUNC_SMPTE240M: return "SMPTE240M";
+    case V4L2_XFER_FUNC_NONE:      return "NONE";
+    case V4L2_XFER_FUNC_SMPTE2084: return "SMPTE2084";
+    case V4L2_XFER_FUNC_DCI_P3:    return "DCI_P3";
+    default:                       return "?";
+    }
+}
+
+static void log_colorimetry(const struct v4l2_pix_format *pix)
+{
+    LOG_INFO("V4L2 colorimetry: colorspace=%u (%s), ycbcr_enc=%u (%s), "
+             "quantization=%u (%s), xfer_func=%u (%s)",
+             pix->colorspace,   colorspace_name(pix->colorspace),
+             pix->ycbcr_enc,    ycbcr_enc_name(pix->ycbcr_enc),
+             pix->quantization, quantization_name(pix->quantization),
+             pix->xfer_func,    xfer_func_name(pix->xfer_func));
+}
+
+/* Resolve V4L2 colorimetry to a YUV->RGB matrix (0 = BT.601, 1 = BT.709).
+ * ycbcr_enc is the explicit matrix selector and trumps everything when set.
+ * If ycbcr_enc is DEFAULT, derive from colorspace per V4L2 conventions.
+ * Last-resort fallback uses resolution: HD content is BT.709. */
+static int detect_color_matrix(const struct v4l2_pix_format *pix)
+{
+    switch (pix->ycbcr_enc) {
+    case V4L2_YCBCR_ENC_601:
+    case V4L2_YCBCR_ENC_XV601:
+        return 0;
+    case V4L2_YCBCR_ENC_709:
+    case V4L2_YCBCR_ENC_XV709:
+    case V4L2_YCBCR_ENC_BT2020:
+    case V4L2_YCBCR_ENC_BT2020_CONST_LUM:
+    case V4L2_YCBCR_ENC_SMPTE240M:
+        return 1;
+    case V4L2_YCBCR_ENC_DEFAULT:
+    default:
+        break;
+    }
+
+    switch (pix->colorspace) {
+    case V4L2_COLORSPACE_SMPTE170M:
+    case V4L2_COLORSPACE_470_SYSTEM_M:
+    case V4L2_COLORSPACE_470_SYSTEM_BG:
+    case V4L2_COLORSPACE_BT878:
+    case V4L2_COLORSPACE_JPEG:
+        return 0;
+    case V4L2_COLORSPACE_REC709:
+    case V4L2_COLORSPACE_SRGB:
+    case V4L2_COLORSPACE_BT2020:
+    case V4L2_COLORSPACE_SMPTE240M:
+        return 1;
+    default:
+        break;
+    }
+
+    return pix->height >= 720 ? 1 : 0;
+}
+
 static int requeue_buffer(struct capture_ctx *ctx, int buf_index)
 {
     struct v4l2_buffer buf = {
@@ -198,7 +308,12 @@ int capture_open(struct capture_ctx *ctx, const char *device,
     ctx->height = fmt.fmt.pix.height;
     ctx->pixfmt = fmt.fmt.pix.pixelformat;
 
+    ctx->color_matrix = detect_color_matrix(&fmt.fmt.pix);
+
     LOG_INFO("Capture format: %dx%d, pixfmt=0x%08x", ctx->width, ctx->height, ctx->pixfmt);
+    log_colorimetry(&fmt.fmt.pix);
+    LOG_INFO("YUV->RGB matrix: %s (auto-detected)",
+             ctx->color_matrix == 1 ? "BT.709" : "BT.601");
     return 0;
 }
 
@@ -314,9 +429,13 @@ int capture_reinit(struct capture_ctx *ctx)
     ctx->width  = fmt.fmt.pix.width;
     ctx->height = fmt.fmt.pix.height;
     ctx->pixfmt = fmt.fmt.pix.pixelformat;
+    ctx->color_matrix = detect_color_matrix(&fmt.fmt.pix);
 
     LOG_INFO("Capture reinit: %dx%d pixfmt=0x%08x",
              ctx->width, ctx->height, ctx->pixfmt);
+    log_colorimetry(&fmt.fmt.pix);
+    LOG_INFO("YUV->RGB matrix: %s (auto-detected)",
+             ctx->color_matrix == 1 ? "BT.709" : "BT.601");
 
     return capture_bring_up_streaming(ctx);
 }

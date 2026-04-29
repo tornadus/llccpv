@@ -19,6 +19,7 @@ struct capture_ctx {
     int width;
     int height;
     uint32_t pixfmt;
+    int color_matrix; /* 0 = BT.601, 1 = BT.709 (auto-detected from V4L2) */
     struct capture_buffer buffers[CAPTURE_NUM_BUFFERS];
     int num_buffers;
     bool streaming;
