@@ -24,7 +24,26 @@ rm -rf build && meson setup build && meson compile -C build
 ./build/llccpv -d /dev/video0 -S fsr -P 0.2 -r limited -f  # all options
 ```
 
-No test suite exists yet.
+## Test Commands
+
+```bash
+# Unit tests (pixel-fidelity, audio, capture mailbox). Tests are
+# build_by_default=false; meson test builds them on demand.
+meson test -C build                    # run all tests
+meson test -C build pixel              # run only the pixel suite
+meson test -C build pixel --print-errorlogs  # surface failure detail
+meson compile -C build test_pixel      # build without running
+
+# End-to-end suite (requires v4l2loopback; skips automatically if absent)
+tests/e2e/setup_device.sh              # one-time, creates /dev/video42 (kdesu)
+tests/e2e/run.sh                       # ~90s correctness + edge cases
+tests/e2e/run.sh --stress              # adds ~12 min RSS/fd soak
+tests/e2e/run.sh -k solid              # filter by name substring
+tests/e2e/run.sh --list                # list without running
+```
+
+The e2e suite is also wired into `meson test` (TAP-protocol target named
+`e2e`) and emits SKIP when the loopback device is absent.
 
 ## Architecture
 
@@ -83,5 +102,8 @@ PipeWire `pw_stream` capture from the card's ALSA node → lock-free SPSC ring b
 - **GL function loading**: Uses `GL_GLEXT_PROTOTYPES` + `-lGL` (works on Mesa, no need for glad/glew).
 - **Shader discovery**: `find_shader_dir()` in main.c searches `./shaders/` → relative to binary → `/usr/local/share/llccpv/shaders`.
 - **Format preference**: NV12 > YUYV > UYVY > MJPEG. NV12 allows higher resolutions on USB (lower bandwidth than 4:2:2).
-- **Color range**: BT.601 YUV→RGB conversion with configurable limited (TV, 16-235) or full (PC, 0-255) range. Most HDMI sources use limited.
+- **Color matrix**: YUV→RGB matrix is auto-detected per source from V4L2's `ycbcr_enc` (primary signal) and `colorspace` (fallback) fields, picking BT.601 vs BT.709. If both are `DEFAULT`, falls back to a height ≥ 720 heuristic. `-c bt601|bt709` overrides. The shader branches on a `color_matrix` uniform.
+- **Color range**: configurable limited (TV, 16-235, default) or full (PC, 0-255). Most HDMI sources use limited. Plumbed via `color_range` uniform in the conversion shader.
+- **Source-format change**: `capture.c` subscribes to `V4L2_EVENT_SOURCE_CHANGE`. When the source switches resolution/pixfmt mid-stream, the capture thread exits, posts a custom SDL event, and main.c calls `capture_reinit()` + re-runs `render_init()` at the new dimensions. Devices that don't support source-change events log a warning and run without it.
+- **render_core static lib**: `src/render.c` + `src/shader.c` are compiled into a static lib that both the app and `test_pixel` link against, so the test harness exercises the same GL pipeline.
 - **Use `kdesu` instead of `sudo`** for privileged commands (user runs KDE, terminal sudo unavailable in this environment).
